@@ -1,0 +1,87 @@
+name: entravel-order-processing
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: orderproc-postgres
+    environment:
+      POSTGRES_USER: orders
+      POSTGRES_PASSWORD: orders
+      POSTGRES_DB: orders
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - orderproc-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orders -d orders"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: orderproc-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - orderproc-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 15s
+
+  api:
+    build:
+      context: .
+      dockerfile: src/OrderProcessing.Api/Dockerfile
+    container_name: orderproc-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=orders;Username=orders;Password=orders"
+      RabbitMq__HostName: rabbitmq
+      RabbitMq__Port: "5672"
+      RabbitMq__UserName: guest
+      RabbitMq__Password: guest
+    ports:
+      - "8080:8080"
+    networks:
+      - orderproc-net
+
+  worker:
+    build:
+      context: .
+      dockerfile: src/OrderProcessing.Worker/Dockerfile
+    container_name: orderproc-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=orders;Username=orders;Password=orders"
+      RabbitMq__HostName: rabbitmq
+      RabbitMq__Port: "5672"
+      RabbitMq__UserName: guest
+      RabbitMq__Password: guest
+    networks:
+      - orderproc-net
+
+networks:
+  orderproc-net:
+    driver: bridge
+
+volumes:
+  pgdata:
+    driver: local
